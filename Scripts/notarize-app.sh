@@ -15,8 +15,14 @@ set -euo pipefail
 #    export APPLE_API_KEY_PATH="$HOME/.private_keys/AuthKey_XXXXXXXXXX.p8"
 
 ROOT=$(cd "$(dirname "$0")"/.. && pwd)
-PRODUCT_NAME="Vercel Deployment Menu Bar"
+PRODUCT_NAME="Open Deployment Menu Bar"
 APP_DIR="$ROOT/build/${PRODUCT_NAME}.app"
+
+# Ad-hoc signed apps cannot be notarized
+if [ -z "${SIGNING_IDENTITY:-}" ]; then
+    echo "⚠️  Notarization skipped: SIGNING_IDENTITY not set (ad-hoc signed)"
+    exit 0
+fi
 
 # Check if environment variables are set
 if [ -z "${APPLE_API_KEY_ID:-}" ] || [ -z "${APPLE_API_ISSUER:-}" ] || [ -z "${APPLE_API_KEY_PATH:-}" ]; then

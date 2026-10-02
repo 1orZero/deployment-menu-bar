@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")"/.. && pwd)
-PRODUCT_NAME="Vercel Deployment Menu Bar"
+PRODUCT_NAME="Open Deployment Menu Bar"
+EXECUTABLE_NAME="open-deployment-menu-bar"
 BUILD_DIR="$ROOT/.build/release"
-EXECUTABLE="$BUILD_DIR/vercel-deployment-menu-bar"
+EXECUTABLE="$BUILD_DIR/$EXECUTABLE_NAME"
 APP_DIR="$ROOT/build/${PRODUCT_NAME}.app"
 
 rm -rf "$APP_DIR"
@@ -16,15 +17,15 @@ cat > "$APP_DIR/Contents/Info.plist" <<'INFO'
 <plist version="1.0">
 <dict>
     <key>CFBundleDisplayName</key>
-    <string>Vercel Deployment Menu Bar</string>
+    <string>Open Deployment Menu Bar</string>
     <key>CFBundleExecutable</key>
-    <string>vercel-deployment-menu-bar</string>
+    <string>open-deployment-menu-bar</string>
     <key>CFBundleIconFile</key>
     <string>AppIcon</string>
     <key>CFBundleIdentifier</key>
-    <string>com.andrew.vercel-deployment-menu-bar</string>
+    <string>com.1orzero.open-deployment-menu-bar</string>
     <key>CFBundleName</key>
-    <string>Vercel Deployment Menu Bar</string>
+    <string>Open Deployment Menu Bar</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
@@ -42,28 +43,40 @@ cat > "$APP_DIR/Contents/Info.plist" <<'INFO'
 INFO
 
 cp "$EXECUTABLE" "$APP_DIR/Contents/MacOS/"
-chmod +x "$APP_DIR/Contents/MacOS/vercel-deployment-menu-bar"
+chmod +x "$APP_DIR/Contents/MacOS/$EXECUTABLE_NAME"
 
 # Copy app icon if it exists
 if [ -f "$ROOT/Resources/AppIcon.icns" ]; then
     cp "$ROOT/Resources/AppIcon.icns" "$APP_DIR/Contents/Resources/"
 fi
 
-# Sign the app with Developer ID certificate
-SIGNING_IDENTITY="Developer ID Application: Andrew Kim (P44RGE92LU)"
 ENTITLEMENTS="$ROOT/Resources/entitlements.plist"
 
-echo "Signing app with identity: $SIGNING_IDENTITY"
-codesign --force --deep --options runtime \
-    --entitlements "$ENTITLEMENTS" \
-    --sign "$SIGNING_IDENTITY" \
-    --timestamp \
-    "$APP_DIR"
+if [ -n "${SIGNING_IDENTITY:-}" ]; then
+    echo "Signing app with identity: $SIGNING_IDENTITY"
+    codesign --force --deep --options runtime \
+        --entitlements "$ENTITLEMENTS" \
+        --sign "$SIGNING_IDENTITY" \
+        --timestamp \
+        "$APP_DIR"
+else
+    echo "SIGNING_IDENTITY not set: signing ad-hoc"
+    codesign --force --deep \
+        --entitlements "$ENTITLEMENTS" \
+        --sign - \
+        "$APP_DIR"
+fi
 
 # Verify the signature
 codesign --verify --deep --strict --verbose=2 "$APP_DIR"
 
 printf 'App bundle created at %s\n' "$APP_DIR"
+
+# Ad-hoc signed apps cannot be notarized
+if [ -z "${SIGNING_IDENTITY:-}" ]; then
+    echo "Notarization skipped: app is ad-hoc signed"
+    exit 0
+fi
 
 # Notarize the app (if credentials are configured)
 "$ROOT/Scripts/notarize-app.sh"
