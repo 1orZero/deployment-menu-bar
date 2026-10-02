@@ -19,7 +19,7 @@ final class PreferencesWindowController: NSWindowController {
             defer: false
         )
         window.center()
-        window.title = "Vercel Status Preferences"
+        window.title = "Open Deployment Menu Bar Preferences"
         window.contentViewController = hostingController
         super.init(window: window)
         self.window?.delegate = self
@@ -134,7 +134,9 @@ final class PreferencesLookupService {
 }
 
 final class PreferencesViewModel: ObservableObject {
+    @Published var menuLayout: MenuLayout
     @Published var vercelToken: String
+    @Published var cloudflareToken: String
     @Published var gitBranches: String
     @Published var showProduction: Bool
     @Published var showPreview: Bool
@@ -147,6 +149,8 @@ final class PreferencesViewModel: ObservableObject {
     @Published var limitByHours: String
     @Published var refreshIntervalIdle: String
     @Published var refreshIntervalBuilding: String
+    @Published var cloudflareRefreshInterval: String
+    @Published var cloudflareFastRefreshInterval: String
 
     @Published var teamSelectionMode: TeamSelectionMode
     @Published var selectedTeamScopeIDs: Set<String>
@@ -158,9 +162,12 @@ final class PreferencesViewModel: ObservableObject {
     @Published private(set) var teamsLoading: Bool
     @Published private(set) var projectsLoading: Bool
     @Published private(set) var optionsErrorMessage: String?
+    @Published private(set) var tokenErrorMessage: String?
+    @Published private(set) var cloudflareTokenErrorMessage: String?
 
     private let store: PreferencesStore
     private let lookupService: PreferencesLookupService
+    let cloudflareFilters: CloudflareFiltersModel
 
     private var cancellables: Set<AnyCancellable> = []
     private var lookupTask: Task<Void, Never>?
@@ -172,10 +179,13 @@ final class PreferencesViewModel: ObservableObject {
     ) {
         self.store = store
         self.lookupService = lookupService
+        cloudflareFilters = CloudflareFiltersModel(store: store)
 
         let current = store.current
 
-        vercelToken = current.vercelToken
+        menuLayout = current.general.menuLayout
+        vercelToken = store.token(for: .vercel) ?? ""
+        cloudflareToken = store.token(for: .cloudflare) ?? ""
         gitBranches = current.gitBranches
         showProduction = current.showProduction
         showPreview = current.showPreview
@@ -188,6 +198,8 @@ final class PreferencesViewModel: ObservableObject {
         limitByHours = current.limitByHours.map(String.init) ?? ""
         refreshIntervalIdle = current.refreshIntervalIdle.map(String.init) ?? ""
         refreshIntervalBuilding = current.refreshIntervalBuilding.map(String.init) ?? ""
+        cloudflareRefreshInterval = String(current.cloudflare.refreshInterval)
+        cloudflareFastRefreshInterval = String(current.cloudflare.fastRefreshInterval)
 
         let teamIds = current.teamIdList
         teamSelectionMode = teamIds.isEmpty ? .allAccessible : .selected
@@ -214,6 +226,8 @@ final class PreferencesViewModel: ObservableObject {
     func reset() {
         hydrate(from: store.current)
         refreshRemoteOptions(forceReloadTeams: true)
+        cloudflareFilters.hydrate()
+        cloudflareFilters.refreshOptions()
     }
 
     func saveAndClose() {
@@ -275,7 +289,9 @@ final class PreferencesViewModel: ObservableObject {
     private func hydrate(from current: Preferences) {
         isHydrating = true
 
-        vercelToken = current.vercelToken
+        menuLayout = current.general.menuLayout
+        vercelToken = store.token(for: .vercel) ?? ""
+        cloudflareToken = store.token(for: .cloudflare) ?? ""
         gitBranches = current.gitBranches
         showProduction = current.showProduction
         showPreview = current.showPreview
@@ -288,6 +304,8 @@ final class PreferencesViewModel: ObservableObject {
         limitByHours = current.limitByHours.map(String.init) ?? ""
         refreshIntervalIdle = current.refreshIntervalIdle.map(String.init) ?? ""
         refreshIntervalBuilding = current.refreshIntervalBuilding.map(String.init) ?? ""
+        cloudflareRefreshInterval = String(current.cloudflare.refreshInterval)
+        cloudflareFastRefreshInterval = String(current.cloudflare.fastRefreshInterval)
 
         let teamIds = current.teamIdList
         teamSelectionMode = teamIds.isEmpty ? .allAccessible : .selected
@@ -301,7 +319,64 @@ final class PreferencesViewModel: ObservableObject {
     }
 
     private func setupObservers() {
-        observeAutoSave($vercelToken)
+        $vercelToken
+            .dropFirst()
+            .removeDuplicates()
+            .sink { [weak self] token in
+                guard let self, !self.isHydrating else { return }
+                self.tokenErrorMessage = self.saveToken(token, for: .vercel)
+            }
+            .store(in: &cancellables)
+
+        $cloudflareToken
+            .dropFirst()
+            .removeDuplicates()
+            .sink { [weak self] token in
+                guard let self, !self.isHydrating else { return }
+                self.cloudflareTokenErrorMessage = self.saveToken(token, for: .cloudflare)
+            }
+            .store(in: &cancellables)
+
+        // `@Published` emits before the property changes, so save the emitted value rather than re-reading it.
+        $menuLayout
+            .dropFirst()
+            .removeDuplicates()
+            .sink { [weak self] layout in
+                guard let self, !self.isHydrating else { return }
+                self.store.update { $0.general.menuLayout = layout }
+            }
+            .store(in: &cancellables)
+
+        $cloudflareRefreshInterval
+            .dropFirst()
+            .removeDuplicates()
+            .sink { [weak self] text in
+                guard let self, !self.isHydrating else { return }
+                self.store.update {
+                    $0.cloudflare.refreshInterval = Self.cloudflareInterval(
+                        from: text,
+                        default: CloudflarePreferences.default.refreshInterval,
+                        minimum: CloudflarePreferences.minimumRefreshInterval
+                    )
+                }
+            }
+            .store(in: &cancellables)
+
+        $cloudflareFastRefreshInterval
+            .dropFirst()
+            .removeDuplicates()
+            .sink { [weak self] text in
+                guard let self, !self.isHydrating else { return }
+                self.store.update {
+                    $0.cloudflare.fastRefreshInterval = Self.cloudflareInterval(
+                        from: text,
+                        default: CloudflarePreferences.default.fastRefreshInterval,
+                        minimum: CloudflarePreferences.minimumFastRefreshInterval
+                    )
+                }
+            }
+            .store(in: &cancellables)
+
         observeAutoSave($gitBranches)
         observeAutoSave($showProduction)
         observeAutoSave($showPreview)
@@ -328,6 +403,15 @@ final class PreferencesViewModel: ObservableObject {
             }
             .store(in: &cancellables)
 
+        $cloudflareToken
+            .dropFirst()
+            .removeDuplicates()
+            .debounce(for: .milliseconds(500), scheduler: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.cloudflareFilters.refreshOptions()
+            }
+            .store(in: &cancellables)
+
         Publishers.Merge(
             $teamSelectionMode.dropFirst().map { _ in () },
             $selectedTeamScopeIDs.dropFirst().map { _ in () }
@@ -336,6 +420,16 @@ final class PreferencesViewModel: ObservableObject {
             self?.refreshRemoteOptions(forceReloadTeams: false)
         }
         .store(in: &cancellables)
+    }
+
+    /// Saves the token and returns the error message to show, if any.
+    private func saveToken(_ token: String, for account: TokenAccount) -> String? {
+        do {
+            try store.setToken(token, for: account)
+            return nil
+        } catch {
+            return error.localizedDescription
+        }
     }
 
     private func observeAutoSave<T>(_ publisher: Published<T>.Publisher) {
@@ -351,7 +445,6 @@ final class PreferencesViewModel: ObservableObject {
         guard !isHydrating else { return }
 
         store.update { preferences in
-            preferences.vercelToken = vercelToken.trimmingCharacters(in: .whitespacesAndNewlines)
             preferences.teamId = serializedTeamScopeIDs
             preferences.projectName = serializedProjectNames
             preferences.gitBranches = gitBranches
@@ -367,6 +460,11 @@ final class PreferencesViewModel: ObservableObject {
             preferences.refreshIntervalIdle = Int(refreshIntervalIdle)
             preferences.refreshIntervalBuilding = Int(refreshIntervalBuilding)
         }
+    }
+
+    /// Empty or invalid text keeps the default; values below the minimum are raised to it.
+    private static func cloudflareInterval(from text: String, default defaultValue: Int, minimum: Int) -> Int {
+        Int(text).map { max($0, minimum) } ?? defaultValue
     }
 
     private var serializedTeamScopeIDs: String {
@@ -516,7 +614,64 @@ final class PreferencesViewModel: ObservableObject {
 
 struct PreferencesView: View {
     @ObservedObject var viewModel: PreferencesViewModel
-    @State private var showToken = false
+
+    var body: some View {
+        VStack(spacing: 0) {
+            TabView {
+                GeneralPreferencesTab(viewModel: viewModel)
+                    .tabItem { Text("General") }
+                VercelPreferencesTab(viewModel: viewModel)
+                    .tabItem { Text("Vercel") }
+                CloudflarePreferencesTab(viewModel: viewModel, filters: viewModel.cloudflareFilters)
+                    .tabItem { Text("Cloudflare") }
+            }
+            .padding([.top, .horizontal])
+
+            HStack {
+                Text("Changes auto-save.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button("Close") {
+                    PreferencesWindowController.shared.close()
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .keyboardShortcut(.return)
+            }
+            .padding()
+        }
+        .frame(minWidth: 560, minHeight: 760)
+        .background(Color(nsColor: .windowBackgroundColor))
+    }
+}
+
+private struct GeneralPreferencesTab: View {
+    @ObservedObject var viewModel: PreferencesViewModel
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                VStack(alignment: .leading, spacing: 12) {
+                    Picker("Menu Layout", selection: $viewModel.menuLayout) {
+                        Text("By Time").tag(MenuLayout.byTime)
+                        Text("By Platform").tag(MenuLayout.byPlatform)
+                    }
+                    .pickerStyle(.menu)
+                    .fixedSize()
+                }
+                .padding()
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color(nsColor: .controlBackgroundColor))
+                .cornerRadius(8)
+            }
+            .padding()
+        }
+    }
+}
+
+private struct VercelPreferencesTab: View {
+    @ObservedObject var viewModel: PreferencesViewModel
 
     var body: some View {
         ScrollView {
@@ -531,21 +686,14 @@ struct PreferencesView: View {
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
 
-                        HStack(spacing: 10) {
-                            if showToken {
-                                TextField("", text: $viewModel.vercelToken, prompt: Text("Enter your token"))
-                                    .textFieldStyle(.roundedBorder)
-                                    .font(.system(.body, design: .monospaced))
-                            } else {
-                                PasteableSecureField(text: $viewModel.vercelToken, placeholder: "Enter your token")
-                            }
+                        TokenField(text: $viewModel.vercelToken)
+                            .help("Required. Create a token at vercel.com/account/tokens with 'Read Deployments' permission.")
 
-                            Button(showToken ? "Hide" : "Show") {
-                                showToken.toggle()
-                            }
-                            .buttonStyle(.bordered)
+                        if let tokenErrorMessage = viewModel.tokenErrorMessage {
+                            Text("Couldn’t save token: \(tokenErrorMessage)")
+                                .font(.caption)
+                                .foregroundStyle(.orange)
                         }
-                        .help("Required. Create a token at vercel.com/account/tokens with 'Read Deployments' permission.")
                     }
 
                     HStack {
@@ -582,27 +730,21 @@ struct PreferencesView: View {
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             } else {
-                                VStack(alignment: .leading, spacing: 6) {
-                                    VStack(alignment: .leading, spacing: 6) {
-                                        ForEach(viewModel.availableTeamScopes) { scope in
-                                            Toggle(isOn: viewModel.teamSelectionBinding(for: scope.id)) {
-                                                VStack(alignment: .leading, spacing: 2) {
-                                                    Text(scope.title)
-                                                    if let subtitle = scope.subtitle {
-                                                        Text(subtitle)
-                                                            .font(.caption)
-                                                            .foregroundStyle(.secondary)
-                                                    }
+                                CheckboxListBox {
+                                    ForEach(viewModel.availableTeamScopes) { scope in
+                                        Toggle(isOn: viewModel.teamSelectionBinding(for: scope.id)) {
+                                            VStack(alignment: .leading, spacing: 2) {
+                                                Text(scope.title)
+                                                if let subtitle = scope.subtitle {
+                                                    Text(subtitle)
+                                                        .font(.caption)
+                                                        .foregroundStyle(.secondary)
                                                 }
                                             }
-                                            .toggleStyle(.checkbox)
                                         }
+                                        .toggleStyle(.checkbox)
                                     }
                                 }
-                                .padding(8)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .background(Color(nsColor: .textBackgroundColor).opacity(0.5))
-                                .clipShape(RoundedRectangle(cornerRadius: 8))
                             }
                         }
                     }
@@ -630,18 +772,12 @@ struct PreferencesView: View {
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             } else {
-                                VStack(alignment: .leading, spacing: 6) {
-                                    VStack(alignment: .leading, spacing: 6) {
-                                        ForEach(viewModel.availableProjects) { project in
-                                            Toggle(project.name, isOn: viewModel.projectSelectionBinding(for: project.name))
-                                                .toggleStyle(.checkbox)
-                                        }
+                                CheckboxListBox {
+                                    ForEach(viewModel.availableProjects) { project in
+                                        Toggle(project.name, isOn: viewModel.projectSelectionBinding(for: project.name))
+                                            .toggleStyle(.checkbox)
                                     }
                                 }
-                                .padding(8)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .background(Color(nsColor: .textBackgroundColor).opacity(0.5))
-                                .clipShape(RoundedRectangle(cornerRadius: 8))
                             }
                         }
                     }
@@ -760,25 +896,297 @@ struct PreferencesView: View {
                 .padding()
                 .background(Color(nsColor: .controlBackgroundColor))
                 .cornerRadius(8)
-
-                HStack {
-                    Text("Changes auto-save.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Button("Close") {
-                        PreferencesWindowController.shared.close()
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.large)
-                    .keyboardShortcut(.return)
-                }
-                .padding(.top, 8)
             }
             .padding()
         }
-        .frame(minWidth: 560, minHeight: 760)
-        .background(Color(nsColor: .windowBackgroundColor))
+    }
+}
+
+private struct CloudflarePreferencesTab: View {
+    @ObservedObject var viewModel: PreferencesViewModel
+    @ObservedObject var filters: CloudflareFiltersModel
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Authentication")
+                        .font(.headline)
+                        .foregroundStyle(.primary)
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Cloudflare API Token")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+
+                        TokenField(text: $viewModel.cloudflareToken)
+
+                        if let tokenErrorMessage = viewModel.cloudflareTokenErrorMessage {
+                            Text("Couldn’t save token: \(tokenErrorMessage)")
+                                .font(.caption)
+                                .foregroundStyle(.orange)
+                        }
+                    }
+
+                    HStack {
+                        Text("Scope & Project")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button("Refresh") {
+                            filters.refreshOptions()
+                        }
+                        .disabled(!filters.hasToken || filters.isLoading)
+                    }
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Text("Accounts")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Picker("", selection: $filters.accountSelectionMode) {
+                                Text("All Accessible Accounts").tag(TeamSelectionMode.allAccessible)
+                                Text("Choose Specific Accounts").tag(TeamSelectionMode.selected)
+                            }
+                            .pickerStyle(.menu)
+                            .labelsHidden()
+                        }
+
+                        if filters.isLoading {
+                            ProgressView("Loading accounts…")
+                                .controlSize(.small)
+                        } else if filters.accountSelectionMode == .selected {
+                            if filters.availableAccounts.isEmpty {
+                                Text("No accounts available for this token.")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            } else {
+                                CheckboxListBox {
+                                    ForEach(filters.availableAccounts) { account in
+                                        Toggle(account.title, isOn: selectionBinding(account.id, in: \.selectedAccountIDs))
+                                            .toggleStyle(.checkbox)
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Text("Projects")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Picker("", selection: $filters.projectSelectionMode) {
+                                Text("All Projects In Scope").tag(ProjectSelectionMode.allAccessible)
+                                Text("Choose Specific Projects").tag(ProjectSelectionMode.selected)
+                            }
+                            .pickerStyle(.menu)
+                            .labelsHidden()
+                        }
+
+                        if filters.isLoading {
+                            ProgressView("Loading projects…")
+                                .controlSize(.small)
+                        } else if filters.projectSelectionMode == .selected {
+                            if filters.availableProjects.isEmpty {
+                                Text("No projects found for the selected account(s).")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            } else {
+                                CheckboxListBox {
+                                    ForEach(filters.availableProjects, id: \.self) { project in
+                                        Toggle(isOn: selectionBinding(project, in: \.selectedProjects)) {
+                                            VStack(alignment: .leading, spacing: 2) {
+                                                Text(project.name)
+                                                Text(projectSubtitle(project))
+                                                    .font(.caption)
+                                                    .foregroundStyle(.secondary)
+                                            }
+                                        }
+                                        .toggleStyle(.checkbox)
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if let errorMessage = filters.errorMessage {
+                        Text("Couldn’t refresh accounts/projects: \(errorMessage)")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                    }
+                }
+                .padding()
+                .background(Color(nsColor: .controlBackgroundColor))
+                .cornerRadius(8)
+
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Filters")
+                        .font(.headline)
+                        .foregroundStyle(.primary)
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Git Branches (optional)")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                        TextField("", text: $filters.gitBranches, prompt: Text("e.g. main, develop"))
+                            .textFieldStyle(.roundedBorder)
+                    }
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Deployment Types")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                        HStack(spacing: 16) {
+                            Toggle("Production", isOn: $filters.showProduction)
+                            Toggle("Preview", isOn: $filters.showPreview)
+                        }
+                    }
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Deployment States")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack(spacing: 16) {
+                                Toggle("Ready", isOn: $filters.showReady)
+                                Toggle("Building", isOn: $filters.showBuilding)
+                            }
+                            HStack(spacing: 16) {
+                                Toggle("Error", isOn: $filters.showError)
+                                Toggle("Queued", isOn: $filters.showQueued)
+                            }
+                            HStack(spacing: 16) {
+                                Toggle("Canceled", isOn: $filters.showCanceled)
+                                Toggle("Skipped", isOn: $filters.showSkipped)
+                            }
+                        }
+                    }
+                }
+                .padding()
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color(nsColor: .controlBackgroundColor))
+                .cornerRadius(8)
+
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Limits")
+                        .font(.headline)
+                        .foregroundStyle(.primary)
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Maximum Deployments (optional)")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                        NumericTextField(text: $filters.limitByCount, placeholder: "e.g. 5")
+                    }
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Show Only Last X Hours (optional)")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                        NumericTextField(text: $filters.limitByHours, placeholder: "e.g. 24")
+                    }
+                }
+                .padding()
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color(nsColor: .controlBackgroundColor))
+                .cornerRadius(8)
+
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Refresh Intervals")
+                        .font(.headline)
+                        .foregroundStyle(.primary)
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Full Refresh Interval (seconds)")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                        NumericTextField(text: $viewModel.cloudflareRefreshInterval, placeholder: "Default: 30")
+                            .help("How often to fetch every Cloudflare deployment (in seconds, at least 10)")
+                    }
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("In-Progress Interval (seconds)")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                        NumericTextField(text: $viewModel.cloudflareFastRefreshInterval, placeholder: "Default: 5")
+                            .help("How often to re-check only queued or building deployments (in seconds, at least 2)")
+                    }
+
+                    Text("Cloudflare allows 1200 API requests per 5 minutes per user. Defaults: 30s full, 5s in progress.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .padding(.top, 4)
+                }
+                .padding()
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color(nsColor: .controlBackgroundColor))
+                .cornerRadius(8)
+            }
+            .padding()
+        }
+    }
+
+    private func selectionBinding<Element: Hashable>(
+        _ element: Element,
+        in keyPath: ReferenceWritableKeyPath<CloudflareFiltersModel, Set<Element>>
+    ) -> Binding<Bool> {
+        Binding(
+            get: { filters[keyPath: keyPath].contains(element) },
+            set: { isSelected in
+                if isSelected {
+                    filters[keyPath: keyPath].insert(element)
+                } else {
+                    filters[keyPath: keyPath].remove(element)
+                }
+            }
+        )
+    }
+
+    private func projectSubtitle(_ project: CloudflareProjectScope) -> String {
+        let kind = project.kind == .pages ? "Pages" : "Workers"
+        guard let account = filters.accountTitle(for: project.accountID) else { return kind }
+        return "\(kind) · \(account)"
+    }
+}
+
+/// Bordered box around a scope picker's checkbox list.
+private struct CheckboxListBox<Content: View>: View {
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            content
+        }
+        .padding(8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(nsColor: .textBackgroundColor).opacity(0.5))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+}
+
+/// Secure token entry with a Show/Hide toggle for checking what was pasted.
+private struct TokenField: View {
+    @Binding var text: String
+    @State private var showToken = false
+
+    var body: some View {
+        HStack(spacing: 10) {
+            if showToken {
+                TextField("", text: $text, prompt: Text("Enter your token"))
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(.body, design: .monospaced))
+            } else {
+                PasteableSecureField(text: $text, placeholder: "Enter your token")
+            }
+
+            Button(showToken ? "Hide" : "Show") {
+                showToken.toggle()
+            }
+            .buttonStyle(.bordered)
+        }
     }
 }
 
