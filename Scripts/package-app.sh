@@ -22,6 +22,8 @@ cat > "$APP_DIR/Contents/Info.plist" <<'INFO'
     <string>open-deployment-menu-bar</string>
     <key>CFBundleIconFile</key>
     <string>AppIcon</string>
+    <key>CFBundleIconName</key>
+    <string>AppIcon</string>
     <key>CFBundleIdentifier</key>
     <string>com.1orzero.open-deployment-menu-bar</string>
     <key>CFBundleName</key>
@@ -45,10 +47,12 @@ INFO
 cp "$EXECUTABLE" "$APP_DIR/Contents/MacOS/"
 chmod +x "$APP_DIR/Contents/MacOS/$EXECUTABLE_NAME"
 
-# Copy app icon if it exists
-if [ -f "$ROOT/Resources/AppIcon.icns" ]; then
-    cp "$ROOT/Resources/AppIcon.icns" "$APP_DIR/Contents/Resources/"
-fi
+# App icon: Assets.car (CFBundleIconName, system-masked on macOS 26+) with AppIcon.icns fallback (CFBundleIconFile)
+for icon_resource in AppIcon.icns Assets.car; do
+    if [ -f "$ROOT/Resources/$icon_resource" ]; then
+        cp "$ROOT/Resources/$icon_resource" "$APP_DIR/Contents/Resources/"
+    fi
+done
 
 ENTITLEMENTS="$ROOT/Resources/entitlements.plist"
 
