@@ -1,175 +1,137 @@
-# Vercel Deployment Menu Bar for macOS (Open Source)
+# Open Deployment Menu Bar
 
-A lightweight **macOS menu bar app** to **monitor Vercel deployments** in real time — see build/ready/error status at a glance and jump to details with one click.
+A macOS menu bar app that shows your **Vercel** and **Cloudflare Pages/Workers** deployments. The latest deployment's status sits in the menu bar, and clicking a row opens it in the browser.
 
-![Vercel deployment status in macOS menu bar showing build/ready/error states](./vercel-menu-bar-deployment-status-macos.png)
+![Open Deployment Menu Bar on macOS showing Vercel (black ▲) and Cloudflare (orange ☁) deployment rows](./open-deployment-menu-bar-macos.png)
 
-**Features**
-- Real-time deployment status (build, ready, error)
-- Personal or Team tokens
-- Comma-separated team and project filters
-- Notarized, code-signed app (no Gatekeeper warnings)
-- Native Swift app — lightweight and fast
-- Quick access to deployment details from the menu bar
+This project is a fork of [andrewk17/vercel-deployment-menu-bar](https://github.com/andrewk17/vercel-deployment-menu-bar), extended with Cloudflare support.
+
+## Features
+
+- Vercel deployments, plus Cloudflare Pages deployments and Workers deployments. Each row shows the state: queued, building, ready, error, canceled or skipped.
+- Workers rows can include Workers Builds status (building, failed, canceled) when the token allows it. Gradual rollouts show the traffic percentage.
+- The menu bar shows the newest deployment across both platforms: ▲ for Vercel or ☁ for Cloudflare, followed by a state icon. In the menu, Vercel rows use a black ▲ and Cloudflare rows an orange ☁. A ⚠ appears when one platform has a problem while the other keeps working.
+- Per-platform filters: scopes/accounts and projects (checkbox pickers), git branches, Production/Preview, deployment states, and a count or time limit.
+- Two menu layouts: all deployments sorted by time, or grouped by platform.
+- API tokens are stored in the macOS Keychain.
+- Native Swift app.
 
 ## Installation
 
-### Pre-built Binary (Easiest)
+### Pre-built release
 
-1. Download the latest release from the [Releases](https://github.com/andrewk17/vercel-deployment-menu-bar/releases) page
-2. Unzip and move the app to your Applications folder
-3. Launch the app
-4. Click the menu bar icon and select "Preferences" to configure your Vercel API token
+1. Download the latest release from the [Releases](https://github.com/1orZero/deployment-menu-bar/releases) page.
+2. Unzip it and move `Open Deployment Menu Bar.app` to your Applications folder.
+3. Launch the app, click its menu bar item and choose **Preferences…** to add your tokens.
 
-### Build from Source
+### Build from source
 
 Requirements:
 - macOS 13.0 or later
-- Xcode 15.0 or later
-- Swift 5.9 or later
+- Swift 5.9 or later (Xcode 15 or later)
+- Xcode 26 or later only if you want to regenerate the app icon's `Assets.car`
 
 ```bash
-# Clone the repository
-git clone https://github.com/andrewk17/vercel-deployment-menu-bar.git
-cd vercel-deployment-menu-bar
+git clone https://github.com/1orZero/deployment-menu-bar.git
+cd deployment-menu-bar
 
-# Build the app
 swift build -c release
-
-# Package as .app bundle (creates a signed and notarized app)
 ./Scripts/package-app.sh
 
-# The app will be created at: build/Vercel Deployment Menu Bar.app
+# Output: build/Open Deployment Menu Bar.app
 ```
 
-#### For Developers: Code Signing & Notarization
+### Packaging, signing and notarization
 
-The app is properly code signed and notarized to prevent macOS Gatekeeper warnings. If you're building for distribution:
+`Scripts/package-app.sh` builds the `.app` bundle and signs it with the identity in `SIGNING_IDENTITY`:
 
-1. **Prerequisites:**
-   - Apple Developer account ($99/year)
-   - Developer ID Application certificate installed
-   - App Store Connect API key for notarization
+```bash
+SIGNING_IDENTITY="Developer ID Application: Your Name (TEAMID)" ./Scripts/package-app.sh
+```
 
-2. **Setup App Store Connect API Key:**
-   ```bash
-   # Create directory for API key
-   mkdir -p ~/.private_keys
+When `SIGNING_IDENTITY` is unset, the app is signed ad-hoc and notarization is skipped. An ad-hoc build runs fine on your own Mac, but macOS asks for Keychain access again after each rebuild because the code signature changes.
 
-   # Download your .p8 file from https://appstoreconnect.apple.com/access/api
-   # Move it to ~/.private_keys/
+Notarization also needs an App Store Connect API key:
 
-   # Add to ~/.zshrc or ~/.bash_profile:
-   export APPLE_API_KEY_ID="your-key-id"
-   export APPLE_API_ISSUER="your-issuer-id"
-   export APPLE_API_KEY_PATH="$HOME/.private_keys/AuthKey_XXXXXXXXXX.p8"
-   ```
+```bash
+export APPLE_API_KEY_ID="your-key-id"
+export APPLE_API_ISSUER="your-issuer-id"
+export APPLE_API_KEY_PATH="$HOME/.private_keys/AuthKey_XXXXXXXXXX.p8"
+```
 
-3. **Build and notarize:**
-   ```bash
-   ./Scripts/package-app.sh
-   # The script will automatically sign and notarize the app
-   ```
+If these are missing, the script signs the app and skips notarization.
 
-The build script will:
-- Sign the app with your Developer ID certificate
-- Submit to Apple's notary service
-- Staple the notarization ticket
-- Verify the signature
-
-If notarization credentials aren't configured, the script will still sign the app but skip notarization.
+The app icon comes from `Resources/AppIcon-source.png` and `Resources/AppIcon.icon`. `Scripts/create-app-icon.sh` regenerates `Resources/AppIcon.icns` and, with Xcode 26 or later (`xcrun actool`), `Resources/Assets.car`. The bundle includes both: `Assets.car` gives the system-masked icon on macOS 26+, and the `.icns` is the fallback for older systems.
 
 ## Configuration
 
-### Step 1: Generate a Vercel API Token
+Open **Preferences…** from the menu. The window has three tabs: General, Vercel and Cloudflare. Changes save automatically. A platform without a token is turned off; with no token on either platform the menu bar shows "No Token".
 
-1. Go to [Vercel Account Settings → Tokens](https://vercel.com/account/tokens)
-2. Click "Create Token"
-3. Give your token a name (e.g., "Menu Bar App")
-4. Choose the scope:
-   - **Personal Account**: Select your personal account scope
-   - **Team Account**: Select the specific team you want to monitor
-5. Set an expiration date (optional but recommended)
-6. Click "Create Token"
-7. **Important**: Copy the token immediately - you won't be able to see it again!
+### Vercel
 
-### Step 2: Configure the App
+1. Create a token at [Vercel Account Settings → Tokens](https://vercel.com/account/tokens). Copy it right away, because Vercel shows it only once.
+2. Paste it into **Vercel API Token** on the Vercel tab.
+3. Under **Scope & Project**, keep "All Accessible Scopes" or choose specific team scopes, then keep "All Projects In Scope" or choose specific projects. Both lists are checkbox pickers filled from your token.
+4. Optional filters: git branches (comma-separated), Production/Preview, deployment states, and a limit by count or by the last X hours. If both limits are set, the count wins.
 
-1. Launch "Vercel Deployment Menu Bar" from your Applications folder
-2. Click the menu bar icon (upside-down triangle)
-3. Select "Preferences"
-4. Enter your API token in the "Token" field
+### Cloudflare
 
-### Step 3: Configure Team ID(s) (Only if you scoped the token to a team)
+1. In the Cloudflare dashboard, go to **My Profile → API Tokens** and create a custom token with these read permissions:
+   - Account Settings Read
+   - Cloudflare Pages Read
+   - Workers Scripts Read
+2. To see Workers Builds status, the token must be a **user** API token that also has **Workers CI Read**. The Builds API rejects account-owned tokens. Without it, Workers deployments still appear without build status, and the menu bar shows ⚠ with the message "Workers build status needs a user API token with Workers CI Read".
+3. Account-owned tokens work for Pages and Workers deployments.
+4. Paste the token into **Cloudflare API Token** on the Cloudflare tab.
+5. Optional: pick accounts and projects (Pages and Workers appear in one list), then set branch, environment, state (including Skipped) and limit filters.
 
-If you created a token scoped to a specific team, you **must** also enter your Team ID:
+### General
 
-1. In the Preferences window, locate the "Team ID(s)" field
-2. To find your Team ID:
-   - Go to your [Vercel Dashboard](https://vercel.com/)
-   - Select your team from the dropdown
-   - Look at the URL - it will be: `https://vercel.com/[TEAM_ID]/~`
-   - The `[TEAM_ID]` is what you need (e.g., if the URL is `https://vercel.com/acme-corp/~`, your Team ID is `acme-corp`)
-   - Alternatively, go to Team Settings → General and find your Team Slug
-3. Enter one Team ID, or multiple Team IDs as comma-separated values (e.g., `acme-corp, studio-team`)
-4. Click save
+**Menu Layout** controls how the menu lists deployments:
+- **By Time**: both platforms merged, newest first. Problems appear as banners at the top, and the Open Vercel/Cloudflare Dashboard items sit at the bottom.
+- **By Platform**: a Vercel section and a Cloudflare section, each with its own banner, deployments and dashboard link.
 
-**Note**: If you used a personal account token, you can leave the Team ID(s) field empty.
+### Refresh intervals and rate limits
 
-### Step 4: Optional Project Name Filter
+- **Vercel**: every 15 seconds when idle, every 2 seconds while a deployment is building. Both are configurable.
+- **Cloudflare**: a full refresh every 30 seconds (minimum 10). While something is queued or building, the app also re-checks only those rows every 5 seconds (minimum 2), one request per row.
 
-To only show specific projects, set "Project Name(s)" in Preferences:
+Cloudflare allows 1200 API requests per 5 minutes per user. A full refresh costs a few requests per account and one per Worker or Pages project, so many projects with a short interval can hit the limit. Selecting specific accounts and projects cuts the request count. When Cloudflare returns 429, the app pauses all Cloudflare requests until `Retry-After` expires (60 seconds if missing), keeps the last rows, and shows ⚠ with a countdown.
 
-1. Enter one project name, or multiple as comma-separated values (e.g., `web-app, api`)
-2. Only deployments from those projects will be shown
+### Tokens and the Keychain
 
-### Step 5: Start Monitoring
-
-Once configured, the app will automatically start monitoring your deployments. The menu bar icon will update based on your latest deployment status.
-
-## How It Works
-
-The app uses the Vercel API to:
-1. Fetch your deployment list periodically
-2. Check the status of each deployment
-3. Update the menu bar icon based on deployment states
-4. Display deployment details in a convenient menu
-
-## Requirements
-
-- macOS 13.0+
-- Vercel API token
-
-## License
-
-MIT License - see [LICENSE](LICENSE) file for details
+Tokens are saved in the login Keychain under the service `com.1orzero.open-deployment-menu-bar`. Settings and a plain-text Vercel token from earlier versions (including the original Vercel Deployment Menu Bar) are migrated on first launch: the token moves to the Keychain and is removed from the settings.
 
 ## FAQ
 
-### How do I monitor Vercel deployments from the macOS menu bar?
+### Which platforms are supported?
 
-Install the Vercel Deployment Menu Bar app, configure it with your Vercel API token, and it will automatically display real-time deployment status in your macOS menu bar. The app polls the Vercel API and updates the status icon based on your latest deployments.
+Vercel, Cloudflare Pages and Cloudflare Workers (including Workers Builds status with a suitable user token).
 
-### Where do I find my Vercel Team ID?
+### Why do my Workers rows have no build status?
 
-If you're using a team-scoped Vercel API token, you need to provide your Team ID:
+The Workers Builds API needs a user API token with Workers CI Read. Account-owned tokens and tokens without that permission still list Workers deployments, but without build status, and the menu bar shows ⚠.
 
-1. Go to your [Vercel Dashboard](https://vercel.com/)
-2. Select your team from the dropdown
-3. Look at the URL: `https://vercel.com/[TEAM_ID]/~`
-4. Copy the `[TEAM_ID]` portion (e.g., if the URL shows `https://vercel.com/acme-corp/~`, your Team ID is `acme-corp`)
-5. Alternatively, go to Team Settings → General to find your Team Slug
+### What does ⚠ in the menu bar mean?
 
-Enter this Team ID in the app's Preferences. You can also enter multiple Team IDs as comma-separated values. If you're using a personal account token, you can leave the Team ID(s) field empty.
+One platform failed (bad token, missing permission, network error, or a Cloudflare rate limit) while the app still has data to show. Open the menu to read the banner. If every enabled platform fails and there is nothing to show, the menu bar shows "Error".
 
 ### How do I fix the "damaged app" error on macOS?
 
-The latest releases (v0.2.0+) are properly code-signed and notarized, so you shouldn't see this error. If you do:
+Builds signed ad-hoc are not notarized. Right-click the app and choose **Open**, or remove the quarantine attribute:
 
-1. Download the latest release from the [Releases](https://github.com/andrewshawcare/vercel-deployment-menu-bar/releases) page
-2. If the error persists, right-click the app and select "Open" instead of double-clicking
-3. For older versions, you may need to remove the quarantine attribute: `xattr -d com.apple.quarantine "/Applications/Vercel Deployment Menu Bar.app"`
+```bash
+xattr -d com.apple.quarantine "/Applications/Open Deployment Menu Bar.app"
+```
+
+## License
+
+MIT License. See [LICENSE](LICENSE).
+
+## Disclaimer
+
+Not affiliated with Vercel Inc. or Cloudflare, Inc. Vercel and Cloudflare are trademarks of their respective owners.
 
 ## Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+Pull requests are welcome.
