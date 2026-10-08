@@ -9,6 +9,7 @@ DerivedData/
 .netrc
 *.xcodeproj
 *.xcworkspace
+.aiartifact.json
 
 # IDE
 .idea/
