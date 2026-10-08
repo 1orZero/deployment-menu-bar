@@ -13,6 +13,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Before the preferences store first reads a token, so the moved tokens are picked up.
+        TokenMigration.move(from: KeychainTokenStore(location: .loginKeychain), to: KeychainTokenStore())
         statusController = StatusItemController()
         statusController?.start()
     }

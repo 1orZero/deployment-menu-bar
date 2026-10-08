@@ -18,9 +18,9 @@ ROOT=$(cd "$(dirname "$0")"/.. && pwd)
 PRODUCT_NAME="Open Deployment Menu Bar"
 APP_DIR="$ROOT/build/${PRODUCT_NAME}.app"
 
-# Ad-hoc signed apps cannot be notarized
-if [ -z "${SIGNING_IDENTITY:-}" ]; then
-    echo "⚠️  Notarization skipped: SIGNING_IDENTITY not set (ad-hoc signed)"
+# Only Developer ID builds can be notarized; Scripts/package-app.sh calls this for EXPORT_METHOD=developer-id.
+if ! codesign -dv "$APP_DIR" 2>&1 | grep -q "Authority=Developer ID Application"; then
+    echo "⚠️  Notarization skipped: the app is not signed with a Developer ID Application certificate"
     exit 0
 fi
 

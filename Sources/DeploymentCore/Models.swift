@@ -198,7 +198,16 @@ extension GeneralPreferences {
 }
 
 final class PreferencesStore {
+    #if os(iOS)
+    /// App Group shared by the iOS app and its widget, so both read the same settings and cached deployments.
+    static let appGroupIdentifier = "group.com.1orzero.open-deployment"
+    static let shared = PreferencesStore(
+        userDefaults: UserDefaults(suiteName: appGroupIdentifier) ?? .standard,
+        legacyUserDefaults: nil
+    )
+    #else
     static let shared = PreferencesStore()
+    #endif
 
     static let didChangeNotification = Notification.Name("PreferencesStoreDidChange")
 
@@ -209,8 +218,6 @@ final class PreferencesStore {
 
     private let userDefaults: UserDefaults
     private let tokenStore: TokenStore
-    /// Polling reads tokens on every refresh; caching keeps that from hitting the Keychain each time.
-    private var cachedTokens: [TokenAccount: String?] = [:]
 
     private(set) var current: Preferences {
         didSet {
@@ -254,34 +261,18 @@ final class PreferencesStore {
         current = preferences
     }
 
+    /// Read from the store each time: another device can replace a token through iCloud Keychain at any moment.
     func token(for account: TokenAccount) -> String? {
-        if let cached = cachedTokens[account] {
-            return cached
-        }
-        let stored = tokenStore.token(for: account)
-        cachedTokens[account] = .some(stored)
-        return stored
-    }
-
-    /// Makes the next `token(for:)` read the store again, picking up changes made outside the app.
-    func discardCachedToken(for account: TokenAccount) {
-        cachedTokens[account] = nil
+        tokenStore.token(for: account)
     }
 
     /// Stores the trimmed token; an empty value deletes the stored token.
     func setToken(_ token: String, for account: TokenAccount) throws {
         let trimmed = token.trimmingCharacters(in: .whitespacesAndNewlines)
-        do {
-            if trimmed.isEmpty {
-                try tokenStore.deleteToken(for: account)
-                cachedTokens[account] = .some(nil)
-            } else {
-                try tokenStore.setToken(trimmed, for: account)
-                cachedTokens[account] = .some(trimmed)
-            }
-        } catch {
-            cachedTokens[account] = nil
-            throw error
+        if trimmed.isEmpty {
+            try tokenStore.deleteToken(for: account)
+        } else {
+            try tokenStore.setToken(trimmed, for: account)
         }
         NotificationCenter.default.post(name: Self.didChangeNotification, object: current)
     }
@@ -362,15 +353,16 @@ struct ProjectsResponse: Decodable {
     let projects: [Project]
 }
 
-/// Provider-neutral deployment consumed by filtering, sorting, the status button, and the menu.
-struct Deployment: Equatable {
-    enum Platform: Equatable {
+/// Provider-neutral deployment consumed by filtering, sorting, the status button, the menu, and the iOS app and widget
+/// (which cache it as JSON).
+struct Deployment: Equatable, Codable, Identifiable {
+    enum Platform: Equatable, Codable {
         case vercel
         case cloudflarePages
         case cloudflareWorkers
     }
 
-    enum State: Equatable {
+    enum State: Equatable, Codable {
         case queued
         case building
         case ready
@@ -381,7 +373,7 @@ struct Deployment: Equatable {
         case unknown
     }
 
-    enum Environment: Equatable {
+    enum Environment: Equatable, Codable {
         case production
         case preview
         /// Any other provider environment name (e.g. Vercel custom environments), kept as reported.

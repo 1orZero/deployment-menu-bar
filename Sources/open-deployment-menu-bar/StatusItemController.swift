@@ -4,22 +4,15 @@ import Foundation
 final class StatusItemController {
     private let statusItem: NSStatusItem
     private let menu = NSMenu()
-    private let deploymentService = DeploymentService()
-    private let cloudflareService = CloudflareService()
-
-    private var refreshTimer: Timer?
-    private var cloudflareRefreshTimer: Timer?
-    private var cloudflareFastTimer: Timer?
+    private let poller = DeploymentPoller()
     private var tickTimer: Timer?
-    private var vercel = PlatformStatus()
-    private var cloudflareEnabled = true
-    private var cloudflarePolling = CloudflarePolling()
-    private var cloudflareFastFetchInFlight = false
-    private var cloudflareAccountIDs: [String] = []
-    private var lastFetchDate: Date?
+
+    private var vercel: PlatformStatus {
+        poller.vercel
+    }
 
     private var cloudflare: PlatformStatus {
-        cloudflareEnabled ? cloudflarePolling.status(at: Date()) : PlatformStatus(isEnabled: false)
+        poller.cloudflare
     }
 
     private var statusButtonState: StatusButtonState {
@@ -44,29 +37,25 @@ final class StatusItemController {
         ) { [weak self] _ in
             // Rebuild right away so a layout change shows without waiting for the refetch.
             self?.buildMenu()
-            self?.refreshDeployments(userInitiated: true)
+            self?.poller.refresh()
         }
+        poller.onUpdate = { [weak self] in self?.render() }
 
         buildMenu()
         startTickTimer()
-        refreshDeployments()
+        poller.refresh()
     }
 
     func stop() {
         preferencesObserver.flatMap(NotificationCenter.default.removeObserver)
         preferencesObserver = nil
-        refreshTimer?.invalidate()
-        refreshTimer = nil
-        cloudflareRefreshTimer?.invalidate()
-        cloudflareRefreshTimer = nil
-        cloudflareFastTimer?.invalidate()
-        cloudflareFastTimer = nil
+        poller.stop()
         tickTimer?.invalidate()
         tickTimer = nil
     }
 
     @objc private func refreshFromMenu(_ sender: Any?) {
-        refreshDeployments(userInitiated: true)
+        poller.refresh()
     }
 
     @objc private func openDashboard(_ sender: Any?) {
@@ -86,8 +75,8 @@ final class StatusItemController {
 
     @objc private func openCloudflareDashboard(_ sender: Any?) {
         var urlString = "https://dash.cloudflare.com/"
-        if cloudflareAccountIDs.count == 1 {
-            urlString += cloudflareAccountIDs[0]
+        if poller.cloudflareAccountIDs.count == 1 {
+            urlString += poller.cloudflareAccountIDs[0]
         }
         if let url = URL(string: urlString) {
             NSWorkspace.shared.open(url)
@@ -122,272 +111,14 @@ final class StatusItemController {
     @objc private func tick() {
         updateStatusButton()
         // The rate-limit banner counts down, so rebuild the menu while paused.
-        if cloudflareEnabled, cloudflarePolling.pausedUntil != nil {
+        if poller.cloudflarePausedUntil != nil {
             buildMenu()
         }
-    }
-
-    private func scheduleRefreshTimer(hasBuilding: Bool) {
-        refreshTimer?.invalidate()
-        let preferences = PreferencesStore.shared.current
-        let idleInterval = TimeInterval(preferences.refreshIntervalIdle ?? 15)
-        let buildingInterval = TimeInterval(preferences.refreshIntervalBuilding ?? 2)
-        let interval: TimeInterval = hasBuilding ? buildingInterval : idleInterval
-        refreshTimer = Timer.scheduledTimer(
-            timeInterval: interval,
-            target: self,
-            selector: #selector(triggerRefreshTimer),
-            userInfo: nil,
-            repeats: true
-        )
-        RunLoop.main.add(refreshTimer!, forMode: .common)
-    }
-
-    /// Applies the Cloudflare polling plan. The full-fetch timer restarts only when `restartingFullFetch` is set, so
-    /// fast re-queries do not keep postponing it; the fast timer runs only while the plan has a fast interval.
-    private func scheduleCloudflareTimers(restartingFullFetch: Bool) {
-        let preferences = PreferencesStore.shared.current.cloudflare
-        let plan = cloudflarePolling.plan(at: Date(), preferences: preferences)
-
-        if restartingFullFetch {
-            cloudflareRefreshTimer?.invalidate()
-            let timer = Timer(
-                fireAt: plan.nextFullFetch,
-                interval: preferences.effectiveRefreshInterval,
-                target: self,
-                selector: #selector(triggerCloudflareRefreshTimer),
-                userInfo: nil,
-                repeats: true
-            )
-            RunLoop.main.add(timer, forMode: .common)
-            cloudflareRefreshTimer = timer
-        }
-
-        guard let fastInterval = plan.fastInterval else {
-            cloudflareFastTimer?.invalidate()
-            cloudflareFastTimer = nil
-            return
-        }
-        if let cloudflareFastTimer, cloudflareFastTimer.isValid, cloudflareFastTimer.timeInterval == fastInterval {
-            return
-        }
-        cloudflareFastTimer?.invalidate()
-        let timer = Timer(
-            timeInterval: fastInterval,
-            target: self,
-            selector: #selector(triggerCloudflareFastTimer),
-            userInfo: nil,
-            repeats: true
-        )
-        RunLoop.main.add(timer, forMode: .common)
-        cloudflareFastTimer = timer
-    }
-
-    @objc private func triggerRefreshTimer() {
-        refreshVercel()
-    }
-
-    @objc private func triggerCloudflareRefreshTimer() {
-        refreshCloudflare()
-    }
-
-    @objc private func triggerCloudflareFastTimer() {
-        refreshCloudflareInProgress()
-    }
-
-    private func refreshDeployments(userInitiated: Bool = false) {
-        refreshVercel()
-        refreshCloudflare()
-    }
-
-    private func refreshVercel() {
-        guard let token = PreferencesStore.shared.token(for: .vercel) else {
-            vercel = PlatformStatus(isEnabled: false)
-            render()
-            return
-        }
-        Task {
-            do {
-                let preferences = PreferencesStore.shared.current
-                let deployments = try await deploymentService.fetchAllDeployments(preferences: preferences, token: token)
-                let filtered = filterDeployments(deployments, with: preferences)
-
-                await MainActor.run {
-                    // The token may have been removed or replaced while the request was in flight.
-                    guard PreferencesStore.shared.token(for: .vercel) == token else { return }
-                    self.vercel = PlatformStatus(deployments: filtered)
-                    self.lastFetchDate = Date()
-                    let hasBuilding = filtered.contains { $0.state == .building || $0.state == .queued }
-                    self.scheduleRefreshTimer(hasBuilding: hasBuilding)
-                    self.render()
-                }
-            } catch {
-                await MainActor.run {
-                    guard PreferencesStore.shared.token(for: .vercel) == token else { return }
-                    self.vercel = PlatformStatus(issue: PlatformIssue(message: error.localizedDescription))
-                    // Keep polling on the idle interval so a recovered platform clears its ⚠ on its own.
-                    self.scheduleRefreshTimer(hasBuilding: false)
-                    // The token may have been replaced outside the app (e.g. `security` CLI); re-read it next poll.
-                    PreferencesStore.shared.discardCachedToken(for: .vercel)
-                    self.render()
-                }
-            }
-        }
-    }
-
-    /// Full fetch on its own interval, independent of Vercel's polling. During a 429 pause nothing is sent; the
-    /// full-fetch timer fires again when the pause ends.
-    private func refreshCloudflare() {
-        guard let token = PreferencesStore.shared.token(for: .cloudflare) else {
-            cloudflareRefreshTimer?.invalidate()
-            cloudflareRefreshTimer = nil
-            cloudflareFastTimer?.invalidate()
-            cloudflareFastTimer = nil
-            cloudflareEnabled = false
-            cloudflarePolling = CloudflarePolling()
-            cloudflareAccountIDs = []
-            render()
-            return
-        }
-        cloudflareEnabled = true
-        scheduleCloudflareTimers(restartingFullFetch: true)
-        guard !cloudflarePolling.isPaused(at: Date()) else {
-            render()
-            return
-        }
-        let preferences = PreferencesStore.shared.current.cloudflare
-        Task {
-            do {
-                let snapshot = try await cloudflareService.fetchDeployments(token: token, preferences: preferences)
-                let filtered = preferences.filter(snapshot.deployments)
-
-                await MainActor.run {
-                    guard PreferencesStore.shared.token(for: .cloudflare) == token else { return }
-                    self.cloudflarePolling.applyFullFetch(
-                        rows: filtered,
-                        pendingItems: snapshot.pendingItems,
-                        issue: snapshot.issue
-                    )
-                    self.cloudflareAccountIDs = snapshot.accountIDs
-                    self.lastFetchDate = Date()
-                    self.scheduleCloudflareTimers(restartingFullFetch: false)
-                    self.render()
-                }
-            } catch {
-                await MainActor.run {
-                    guard PreferencesStore.shared.token(for: .cloudflare) == token else { return }
-                    self.applyCloudflareFailure(error)
-                }
-            }
-        }
-    }
-
-    /// Fast tier: re-queries only the in-progress rows of the last full fetch, one request each. When one finishes,
-    /// a full fetch picks up the rows it joins with.
-    private func refreshCloudflareInProgress() {
-        let items = cloudflarePolling.pendingItems
-        guard
-            !cloudflareFastFetchInFlight,
-            !items.isEmpty,
-            !cloudflarePolling.isPaused(at: Date()),
-            let token = PreferencesStore.shared.token(for: .cloudflare)
-        else { return }
-        cloudflareFastFetchInFlight = true
-        Task {
-            let result: Result<[CloudflarePendingUpdate], Error>
-            do {
-                result = .success(try await cloudflareService.fetchPendingUpdates(token: token, items: items))
-            } catch {
-                result = .failure(error)
-            }
-            await MainActor.run {
-                self.cloudflareFastFetchInFlight = false
-                guard PreferencesStore.shared.token(for: .cloudflare) == token else { return }
-                switch result {
-                case let .success(updates):
-                    let finished = self.cloudflarePolling.applyUpdates(updates)
-                    self.render()
-                    if finished {
-                        self.refreshCloudflare()
-                    } else {
-                        self.scheduleCloudflareTimers(restartingFullFetch: false)
-                    }
-                case let .failure(error):
-                    // Other failures are left to the next full fetch, which reports them.
-                    guard CloudflareAPIError.rateLimitEnd(of: error) != nil else { return }
-                    self.applyCloudflareFailure(error)
-                }
-            }
-        }
-    }
-
-    private func applyCloudflareFailure(_ error: Error) {
-        cloudflarePolling.applyFailure(error)
-        if CloudflareAPIError.rateLimitEnd(of: error) == nil {
-            // The token may have been replaced outside the app (e.g. `security` CLI); re-read it next poll.
-            PreferencesStore.shared.discardCachedToken(for: .cloudflare)
-        }
-        // A pause moves the next full fetch to its end; otherwise keep polling on the full interval.
-        scheduleCloudflareTimers(restartingFullFetch: cloudflarePolling.pausedUntil != nil)
-        render()
     }
 
     private func render() {
         buildMenu()
         updateStatusButton()
-    }
-
-    private func filterDeployments(_ deployments: [Deployment], with preferences: Preferences) -> [Deployment] {
-        let normalizedProjectNames = preferences.normalizedProjectNameSet
-
-        var filtered = deployments.filter { deployment in
-            if !normalizedProjectNames.isEmpty {
-                let normalizedDeploymentName = deployment.projectName.lowercased()
-                guard normalizedProjectNames.contains(normalizedDeploymentName) else { return false }
-            }
-
-            switch deployment.state {
-            case .ready:
-                guard preferences.showReady else { return false }
-            case .building:
-                guard preferences.showBuilding else { return false }
-            case .error:
-                guard preferences.showError else { return false }
-            case .queued:
-                guard preferences.showQueued else { return false }
-            case .canceled:
-                guard preferences.showCanceled else { return false }
-            case .skipped, .unknown:
-                break
-            }
-
-            switch deployment.environment {
-            case .production:
-                guard preferences.showProduction else { return false }
-            case .preview:
-                guard preferences.showPreview else { return false }
-            case .custom, nil:
-                break
-            }
-
-            if !preferences.branchList.isEmpty {
-                let branch = (deployment.branch ?? "").lowercased()
-                if branch.isEmpty || !preferences.branchList.contains(branch) {
-                    return false
-                }
-            }
-
-            return true
-        }
-
-        if let limit = preferences.limitByCount, limit > 0 {
-            filtered = Array(filtered.prefix(limit))
-        } else if let hours = preferences.limitByHours, hours > 0 {
-            let cutoff = Date().addingTimeInterval(TimeInterval(-hours * 3600))
-            filtered = filtered.filter { $0.createdAt >= cutoff }
-        }
-
-        return filtered.sorted { $0.createdAt > $1.createdAt }
     }
 
     private func updateStatusButton() {
@@ -600,7 +331,7 @@ final class StatusItemController {
             menu.addItem(menuItem(for: entry))
         }
 
-        if let lastFetchDate {
+        if let lastFetchDate = poller.lastFetchDate {
             menu.addItem(.separator())
             let formatter = DateFormatter()
             formatter.dateStyle = .none
@@ -639,6 +370,7 @@ final class StatusItemController {
         case let .banner(text):
             let item = NSMenuItem(title: text, action: nil, keyEquivalent: "")
             item.image = NSImage(systemSymbolName: "exclamationmark.triangle.fill", accessibilityDescription: nil)
+            item.keepsImageVisible()
             return item
         case let .header(title):
             let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
@@ -654,6 +386,7 @@ final class StatusItemController {
             item.representedObject = deployment.openURL
             item.toolTip = commitToolTip(for: deployment)
             item.image = icon(for: deployment, brandColored: true)
+            item.keepsImageVisible()
             return item
         case let .dashboard(platform):
             return dashboardItem(for: platform)
@@ -767,5 +500,15 @@ final class StatusItemController {
         }
         let cutoff = collapsed.index(collapsed.startIndex, offsetBy: maxLength - 1)
         return String(collapsed[..<cutoff]) + "…"
+    }
+}
+
+private extension NSMenuItem {
+    /// Apps linked against the macOS 27 SDK get menu item images hidden by default. These images carry the
+    /// platform and state of a row (or the ⚠ of a banner), so they stay visible.
+    func keepsImageVisible() {
+        if #available(macOS 27.0, *) {
+            preferredImageVisibility = .visible
+        }
     }
 }

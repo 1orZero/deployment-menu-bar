@@ -1,6 +1,6 @@
 # Open Deployment Menu Bar
 
-A macOS menu bar app that shows your **Vercel** and **Cloudflare Pages/Workers** deployments. The latest deployment's status sits in the menu bar, and clicking a row opens it in the browser.
+A macOS menu bar app, with an iOS companion app and widgets, that shows your **Vercel** and **Cloudflare Pages/Workers** deployments. The latest deployment's status sits in the menu bar, and clicking a row opens it in the browser.
 
 ![Open Deployment Menu Bar on macOS showing Vercel (black ▲) and Cloudflare (orange ☁) deployment rows](./open-deployment-menu-bar-macos.png)
 
@@ -13,7 +13,8 @@ This project is a fork of [andrewk17/vercel-deployment-menu-bar](https://github.
 - The menu bar shows the newest deployment across both platforms: ▲ for Vercel or ☁ for Cloudflare, followed by a state icon. In the menu, Vercel rows use a black ▲ and Cloudflare rows an orange ☁. A ⚠ appears when one platform has a problem while the other keeps working.
 - Per-platform filters: scopes/accounts and projects (checkbox pickers), git branches, Production/Preview, deployment states, and a count or time limit.
 - Two menu layouts: all deployments sorted by time, or grouped by platform.
-- API tokens are stored in the macOS Keychain.
+- API tokens are stored in iCloud Keychain, so the Mac app and the iOS app share them. A token added or changed on one device appears on the other.
+- iOS app with the same deployment list, filters and layouts, plus home screen widgets (latest deployment, today's status, recent deployments, platform split) and lock screen widgets.
 - Native Swift app.
 
 ## Installation
@@ -27,29 +28,30 @@ This project is a fork of [andrewk17/vercel-deployment-menu-bar](https://github.
 ### Build from source
 
 Requirements:
-- macOS 13.0 or later
-- Swift 5.9 or later (Xcode 15 or later)
-- Xcode 26 or later only if you want to regenerate the app icon's `Assets.car`
+- macOS 13.0 or later (Mac app), iOS 17.0 or later (iOS app)
+- Xcode 26 or later
+- [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`brew install xcodegen`)
+- An Apple Developer team. Every target signs with the team set in `project.yml` (`DEVELOPMENT_TEAM`), because iCloud Keychain sharing needs the same team on every app. Change it to your own team before building.
 
 ```bash
 git clone https://github.com/1orZero/deployment-menu-bar.git
 cd deployment-menu-bar
 
-swift build -c release
 ./Scripts/package-app.sh
 
 # Output: build/Open Deployment Menu Bar.app
 ```
 
+`project.yml` describes three targets: `OpenDeploymentMenuBar` (Mac), `OpenDeployment` (iOS) and `OpenDeploymentWidgets` (iOS widget extension). `xcodegen generate` writes `OpenDeployment.xcodeproj`, which is not committed. Shared code lives in `Sources/DeploymentCore`; `swift test` runs the unit tests from `Package.swift`.
+
+A binary from `swift build` is unsigned, so it has no keychain access group and cannot read the synced tokens. Use the Xcode targets to run the app.
+
 ### Packaging, signing and notarization
 
-`Scripts/package-app.sh` builds the `.app` bundle and signs it with the identity in `SIGNING_IDENTITY`:
+`Scripts/package-app.sh` archives the Mac app with automatic signing and exports it. The first run registers the Mac with your team when needed (`-allowProvisioningUpdates`).
 
-```bash
-SIGNING_IDENTITY="Developer ID Application: Your Name (TEAMID)" ./Scripts/package-app.sh
-```
-
-When `SIGNING_IDENTITY` is unset, the app is signed ad-hoc and notarization is skipped. An ad-hoc build runs fine on your own Mac, but macOS asks for Keychain access again after each rebuild because the code signature changes.
+- Default (`EXPORT_METHOD=debugging`): signed with your Apple Development certificate. It runs on Macs registered to your team and is not notarized.
+- `EXPORT_METHOD=developer-id ./Scripts/package-app.sh`: signed with a Developer ID Application certificate for distribution, then notarized by `Scripts/notarize-app.sh`. Your team needs that certificate.
 
 Notarization also needs an App Store Connect API key:
 
@@ -59,9 +61,15 @@ export APPLE_API_ISSUER="your-issuer-id"
 export APPLE_API_KEY_PATH="$HOME/.private_keys/AuthKey_XXXXXXXXXX.p8"
 ```
 
-If these are missing, the script signs the app and skips notarization.
+If these are missing, the script exports the app and skips notarization.
 
-The app icon comes from `Resources/AppIcon-source.png` and `Resources/AppIcon.icon`. `Scripts/create-app-icon.sh` regenerates `Resources/AppIcon.icns` and, with Xcode 26 or later (`xcrun actool`), `Resources/Assets.car`. The bundle includes both: `Assets.car` gives the system-masked icon on macOS 26+, and the `.icns` is the fallback for older systems.
+### iOS app
+
+Run `xcodegen generate`, open `OpenDeployment.xcodeproj`, choose the `OpenDeployment` scheme and run it on an iPhone registered to your team. Tokens saved in the Mac app show up on the iPhone once iCloud Keychain has synced them; both devices need Passwords & Keychain turned on in iCloud settings with the same Apple Account.
+
+The iOS app polls on the Mac app's intervals while it is open. Widgets refresh on their own at most every 5 minutes while something is building and every 30 minutes otherwise, because iOS limits how often a widget can reload. Opening the app or tapping a widget's refresh button updates them right away.
+
+The app icon comes from `Resources/AppIcon-source.png` and `Resources/AppIcon.icon`. `Scripts/create-app-icon.sh` regenerates `Resources/AppIcon.icns` and, with Xcode 26 or later (`xcrun actool`), `Resources/Assets.car`. The Mac bundle includes both: `Assets.car` gives the system-masked icon on macOS 26+, and the `.icns` is the fallback for older systems. The iOS app compiles `Resources/AppIcon.icon` directly.
 
 ## Configuration
 
@@ -100,7 +108,9 @@ Cloudflare allows 1200 API requests per 5 minutes per user. A full refresh costs
 
 ### Tokens and the Keychain
 
-Tokens are saved in the login Keychain under the service `com.1orzero.open-deployment-menu-bar`. Settings and a plain-text Vercel token from earlier versions (including the original Vercel Deployment Menu Bar) are migrated on first launch: the token moves to the Keychain and is removed from the settings.
+Tokens are synchronizable items in the data protection keychain under the service `com.1orzero.open-deployment-menu-bar`, in the access group `<TEAMID>.com.1orzero.open-deployment.shared`. iCloud Keychain syncs them to your other devices, where the iOS app and its widget read them. Settings and filters stay on each device.
+
+On first launch the Mac app moves tokens from the login keychain (versions up to 0.3.0) into iCloud Keychain. macOS may ask once to allow access to the old items. Settings and a plain-text Vercel token from earlier versions (including the original Vercel Deployment Menu Bar) are migrated too: the token moves to the keychain and is removed from the settings.
 
 ## FAQ
 
@@ -118,7 +128,7 @@ One platform failed (bad token, missing permission, network error, or a Cloudfla
 
 ### How do I fix the "damaged app" error on macOS?
 
-Builds signed ad-hoc are not notarized. Right-click the app and choose **Open**, or remove the quarantine attribute:
+Builds exported without Developer ID are not notarized. Right-click the app and choose **Open**, or remove the quarantine attribute:
 
 ```bash
 xattr -d com.apple.quarantine "/Applications/Open Deployment Menu Bar.app"

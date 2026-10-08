@@ -160,6 +160,24 @@ final class PreferencesStoreTests: XCTestCase {
         XCTAssertEqual(store.current.general.menuLayout, .byTime)
     }
 
+    func testMigrationMovesTokensButKeepsOnesAlreadySynced() {
+        let login = InMemoryTokenStore(tokens: [.vercel: "login-vercel", .cloudflare: "login-cloudflare"])
+        let synced = InMemoryTokenStore(tokens: [.cloudflare: "synced-cloudflare"])
+
+        TokenMigration.move(from: login, to: synced)
+
+        XCTAssertEqual(synced.tokens, [.vercel: "login-vercel", .cloudflare: "synced-cloudflare"])
+        XCTAssertTrue(login.tokens.isEmpty)
+    }
+
+    func testMigrationKeepsSourceTokenWhenWriteFails() {
+        let login = InMemoryTokenStore(tokens: [.vercel: "login-vercel"])
+
+        TokenMigration.move(from: login, to: FailingTokenStore())
+
+        XCTAssertEqual(login.tokens, [.vercel: "login-vercel"])
+    }
+
     private func makeDefaults() -> UserDefaults {
         let name = "PreferencesStoreTests.\(UUID().uuidString)"
         suiteNames.append(name)

@@ -1,12 +1,12 @@
 import Foundation
 
 /// Why a platform is not fully healthy. It marks the status button with ⚠ and gets a banner in the menu.
-struct PlatformIssue: Equatable {
+struct PlatformIssue: Equatable, Codable {
     var message: String
 }
 
 /// One platform's latest fetch. A platform without a token is disabled rather than failed.
-struct PlatformStatus {
+struct PlatformStatus: Equatable, Codable {
     var isEnabled = true
     var deployments: [Deployment] = []
     var issue: PlatformIssue?

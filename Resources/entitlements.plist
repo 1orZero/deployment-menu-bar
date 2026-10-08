@@ -8,5 +8,9 @@
     <true/>
     <key>com.apple.security.network.server</key>
     <false/>
+    <key>keychain-access-groups</key>
+    <array>
+        <string>$(AppIdentifierPrefix)com.1orzero.open-deployment.shared</string>
+    </array>
 </dict>
 </plist>

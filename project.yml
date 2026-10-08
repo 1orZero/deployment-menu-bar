@@ -1,0 +1,99 @@
+# Xcode project for the signed apps: `xcodegen generate` writes OpenDeployment.xcodeproj (not committed).
+# Every target signs with the same team so the Mac app, the iOS app and its widget share one iCloud Keychain
+# access group. `swift build` / `swift test` keep working from Package.swift for the Mac sources.
+name: OpenDeployment
+options:
+  bundleIdPrefix: com.1orzero
+  deploymentTarget:
+    iOS: "17.0"
+    macOS: "13.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    DEVELOPMENT_TEAM: 67A6AV33K9
+    CODE_SIGN_STYLE: Automatic
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "0.4.0"
+    CURRENT_PROJECT_VERSION: "4"
+targets:
+  OpenDeploymentMenuBar:
+    type: application
+    platform: macOS
+    sources:
+      - Sources/open-deployment-menu-bar
+      - Sources/DeploymentCore
+      - path: Resources/AppIcon.icns
+        buildPhase: resources
+      - path: Resources/Assets.car
+        buildPhase: resources
+    info:
+      path: Resources/Info.plist
+      properties:
+        CFBundleDisplayName: Open Deployment Menu Bar
+        CFBundleName: Open Deployment Menu Bar
+        CFBundleIconFile: AppIcon
+        CFBundleIconName: AppIcon
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
+        LSApplicationCategoryType: public.app-category.developer-tools
+        LSUIElement: true
+        NSPrincipalClass: NSApplication
+    settings:
+      base:
+        PRODUCT_NAME: Open Deployment Menu Bar
+        PRODUCT_BUNDLE_IDENTIFIER: com.1orzero.open-deployment-menu-bar
+        CODE_SIGN_ENTITLEMENTS: Resources/entitlements.plist
+        ENABLE_HARDENED_RUNTIME: YES
+
+  OpenDeployment:
+    type: application
+    platform: iOS
+    sources:
+      - Sources/DeploymentCore
+      - iOS/Shared
+      - iOS/App
+      - Resources/AppIcon.icon
+    info:
+      path: iOS/Config/App-Info.plist
+      properties:
+        CFBundleDisplayName: Open Deployment
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        CFBundleURLTypes:
+          - CFBundleURLName: com.1orzero.open-deployment
+            CFBundleURLSchemes:
+              - opendeployment
+        ITSAppUsesNonExemptEncryption: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.1orzero.open-deployment
+        CODE_SIGN_ENTITLEMENTS: iOS/Config/App.entitlements
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        TARGETED_DEVICE_FAMILY: "1"
+    dependencies:
+      - target: OpenDeploymentWidgets
+
+  OpenDeploymentWidgets:
+    type: app-extension
+    platform: iOS
+    sources:
+      - Sources/DeploymentCore
+      - iOS/Shared
+      - iOS/Widgets
+    info:
+      path: iOS/Config/Widgets-Info.plist
+      properties:
+        CFBundleDisplayName: Open Deployment
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.1orzero.open-deployment.widgets
+        CODE_SIGN_ENTITLEMENTS: iOS/Config/Widgets.entitlements
+        TARGETED_DEVICE_FAMILY: "1"

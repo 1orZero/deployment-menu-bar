@@ -9,10 +9,11 @@ let package = Package(
         .macOS(.v13)
     ],
     targets: [
-        // Targets are the basic building blocks of a package, defining a module or a test suite.
-        // Targets can depend on other targets in this package and products from dependencies.
+        // DeploymentCore is compiled into each app directly; the iOS app and widget pick it up from project.yml.
         .executableTarget(
             name: "open-deployment-menu-bar",
+            path: "Sources",
+            sources: ["open-deployment-menu-bar", "DeploymentCore"],
             linkerSettings: [
                 .linkedFramework("AppKit"),
                 .linkedFramework("SwiftUI")
