@@ -6,6 +6,9 @@ final class MenuBarDisplayTests: XCTestCase {
         var display = MenuBarDisplay.default
         XCTAssertEqual(display.projectLabel(for: "chat-everywhere"), "CHA")
 
+        display.projectNameLength = 1
+        XCTAssertEqual(display.projectLabel(for: "chat-everywhere"), "C")
+
         display.projectNameLength = 10
         XCTAssertEqual(display.projectLabel(for: "chat-everywhere"), "chat-every…")
         XCTAssertEqual(display.projectLabel(for: "web"), "web")

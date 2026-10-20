@@ -218,20 +218,22 @@ struct MenuBarDisplay: Codable, Equatable {
     var buildTimeStyle = BuildTimeStyle.full
 
     static let `default` = MenuBarDisplay()
-    static let projectNameLengthRange = 3...20
+    static let projectNameLengthRange = 1...20
+    /// Lengths up to this are uppercase abbreviations, like the default "CHA".
+    static let abbreviationLength = 3
 
     /// The last visible part can't be hidden, or the app would vanish from the menu bar.
     var visiblePartCount: Int {
         [showsPlatformIcon, showsStatusIcon, showsProjectName, showsBuildTime].filter { $0 }.count
     }
 
-    /// The shortest length is an uppercase abbreviation ("CHA"); longer lengths keep the name's case and end
-    /// with "…" when cut.
+    /// Short lengths are uppercase abbreviations ("CHA"); longer lengths keep the name's case and end with "…"
+    /// when cut.
     func projectLabel(for name: String) -> String {
         guard projectNameLength > 0 else {
             return name
         }
-        if projectNameLength <= Self.projectNameLengthRange.lowerBound {
+        if projectNameLength <= Self.abbreviationLength {
             return String(name.prefix(projectNameLength)).uppercased()
         }
         guard name.count > projectNameLength else {
