@@ -93,6 +93,7 @@ final class PreferencesLookupService {
 
 final class PreferencesViewModel: ObservableObject {
     @Published var menuLayout: MenuLayout
+    @Published var menuBar: MenuBarDisplay
     @Published var vercelToken: String
     @Published var cloudflareToken: String
     @Published var gitBranches: String
@@ -142,6 +143,7 @@ final class PreferencesViewModel: ObservableObject {
         let current = store.current
 
         menuLayout = current.general.menuLayout
+        menuBar = current.general.menuBar
         vercelToken = store.token(for: .vercel) ?? ""
         cloudflareToken = store.token(for: .cloudflare) ?? ""
         gitBranches = current.gitBranches
@@ -248,6 +250,7 @@ final class PreferencesViewModel: ObservableObject {
         isHydrating = true
 
         menuLayout = current.general.menuLayout
+        menuBar = current.general.menuBar
         vercelToken = store.token(for: .vercel) ?? ""
         cloudflareToken = store.token(for: .cloudflare) ?? ""
         gitBranches = current.gitBranches
@@ -302,6 +305,18 @@ final class PreferencesViewModel: ObservableObject {
             .sink { [weak self] layout in
                 guard let self, !self.isHydrating else { return }
                 self.store.update { $0.general.menuLayout = layout }
+            }
+            .store(in: &cancellables)
+
+        // Dragging the name length slider emits every step, and each save refetches deployments.
+        $menuBar
+            .dropFirst()
+            .removeDuplicates()
+            .debounce(for: .milliseconds(300), scheduler: DispatchQueue.main)
+            .sink { [weak self] display in
+                // The debounce delivers after a hydration finished, so compare instead of trusting `isHydrating`.
+                guard let self, self.store.current.general.menuBar != display else { return }
+                self.store.update { $0.general.menuBar = display }
             }
             .store(in: &cancellables)
 

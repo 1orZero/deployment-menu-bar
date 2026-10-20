@@ -35,8 +35,9 @@ final class StatusItemController {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            // Rebuild right away so a layout change shows without waiting for the refetch.
+            // Rebuild right away so a layout or menu bar change shows without waiting for the refetch.
             self?.buildMenu()
+            self?.updateStatusButton()
             self?.poller.refresh()
         }
         poller.onUpdate = { [weak self] in self?.render() }
@@ -135,46 +136,62 @@ final class StatusItemController {
             button.title = warning ? "⚠" : ""
             button.image = NSImage(systemSymbolName: "circle", accessibilityDescription: nil)
         case let .deployment(latest, warning):
-            // The menu bar keeps both platform symbols in the label color; menu rows use brand colors.
-            button.image = icon(for: latest, brandColored: false)
-            let title = formattedStatusTitle(for: latest)
-            button.title = warning ? "\(title) ⚠" : title
+            let display = PreferencesStore.shared.current.general.menuBar
+            let title = formattedStatusTitle(for: latest, display: display)
+            // When only the build time is shown and this deployment has none, show its state rather than vanish.
+            button.image = statusImage(for: latest, display: display) ?? (title.isEmpty ? icon(for: latest.state) : nil)
+            button.title = warning ? (title.isEmpty ? "⚠" : "\(title) ⚠") : title
         }
     }
 
-    private func formattedStatusTitle(for deployment: Deployment) -> String {
-        let label = String(deployment.projectName.prefix(3)).uppercased()
+    /// The menu bar keeps platform symbols in the label color; menu rows use brand colors.
+    private func statusImage(for deployment: Deployment, display: MenuBarDisplay) -> NSImage? {
+        switch (display.showsPlatformIcon, display.showsStatusIcon) {
+        case (true, true):
+            return icon(for: deployment, brandColored: false)
+        case (true, false):
+            return NSImage(systemSymbolName: platformSymbolName(for: deployment.platform), accessibilityDescription: nil)
+        case (false, true):
+            return icon(for: deployment.state)
+        case (false, false):
+            return nil
+        }
+    }
+
+    private func formattedStatusTitle(for deployment: Deployment, display: MenuBarDisplay) -> String {
+        var parts: [String] = []
+        if display.showsProjectName {
+            parts.append(display.projectLabel(for: deployment.projectName))
+        }
+        if display.showsBuildTime, let elapsed = buildTime(of: deployment) {
+            parts.append(formatDuration(elapsed, style: display.buildTimeStyle))
+        }
+        return parts.joined(separator: " ")
+    }
+
+    /// Time spent so far while building or queued, the final build time once finished, otherwise nil.
+    private func buildTime(of deployment: Deployment) -> TimeInterval? {
         switch deployment.state {
         case .building:
-            let elapsed = Date().timeIntervalSince(deployment.buildStartDate)
-            return "\(label) \(formatDuration(elapsed))"
+            return Date().timeIntervalSince(deployment.buildStartDate)
         case .queued:
-            let elapsed = Date().timeIntervalSince(deployment.createdAt)
-            return "\(label) \(formatDuration(elapsed))"
-        case .ready:
-            if let finishedAt = deployment.finishedAt {
-                let elapsed = finishedAt.timeIntervalSince(deployment.buildStartDate)
-                return "\(label) \(formatDuration(max(elapsed, 0)))"
-            }
-            return label
-        case .error:
-            if let finishedAt = deployment.finishedAt {
-                let elapsed = finishedAt.timeIntervalSince(deployment.buildStartDate)
-                let formatted = formatDuration(max(elapsed, 0))
-                return "\(label) \(formatted)"
-            }
-            return label
+            return Date().timeIntervalSince(deployment.createdAt)
+        case .ready, .error:
+            return deployment.finishedAt.map { max($0.timeIntervalSince(deployment.buildStartDate), 0) }
         case .canceled, .skipped, .unknown:
-            return label
+            return nil
         }
     }
 
-    private func formatDuration(_ seconds: TimeInterval) -> String {
+    private func formatDuration(_ seconds: TimeInterval, style: BuildTimeStyle = .full) -> String {
         let sec = Int(seconds)
         let hours = sec / 3600
         let minutes = (sec % 3600) / 60
         let remaining = sec % 60
 
+        if style == .compact {
+            return hours > 0 ? "\(hours)h" : minutes > 0 ? "\(minutes)m" : "\(remaining)s"
+        }
         if hours > 0 {
             return "\(hours)h \(minutes)m \(remaining)s"
         } else if minutes > 0 {

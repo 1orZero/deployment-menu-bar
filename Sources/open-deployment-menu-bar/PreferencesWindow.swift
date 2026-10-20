@@ -96,9 +96,134 @@ private struct GeneralPreferencesTab: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(Color(nsColor: .controlBackgroundColor))
                 .cornerRadius(8)
+
+                MenuBarDisplaySection(display: $viewModel.menuBar)
+                    .padding()
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color(nsColor: .controlBackgroundColor))
+                    .cornerRadius(8)
             }
             .padding()
         }
+    }
+}
+
+/// The menu bar item drawn large. Each part is a toggle, so the preview is also the control.
+private struct MenuBarDisplaySection: View {
+    @Binding var display: MenuBarDisplay
+
+    private static let sampleProjectName = "storefront-web"
+    /// The slider's last step, past the longest length, stands for the whole name.
+    private static let fullNameStep = Double(MenuBarDisplay.projectNameLengthRange.upperBound + 1)
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Menu Bar")
+                .font(.headline)
+
+            HStack(spacing: 8) {
+                part("Platform Icon", isOn: $display.showsPlatformIcon) {
+                    Image(systemName: "triangle.fill")
+                }
+                part("Status Icon", isOn: $display.showsStatusIcon) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .symbolRenderingMode(.palette)
+                        .foregroundStyle(.white, .green)
+                }
+                part("Project Name", isOn: $display.showsProjectName) {
+                    Text(display.projectLabel(for: Self.sampleProjectName))
+                }
+                part("Build Time", isOn: $display.showsBuildTime) {
+                    Text(display.buildTimeStyle == .compact ? "2m" : "2m 4s")
+                }
+            }
+            .font(.system(size: 18, weight: .semibold).monospacedDigit())
+            .foregroundStyle(.white)
+            .frame(maxWidth: .infinity, minHeight: 76)
+            .background(
+                LinearGradient(
+                    colors: [Color(red: 0.48, green: 0.31, blue: 0.43), Color(red: 0.17, green: 0.23, blue: 0.4)],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                ),
+                in: RoundedRectangle(cornerRadius: 8)
+            )
+
+            Divider()
+
+            HStack {
+                Text("Name Length")
+                Spacer()
+                Slider(value: nameLengthStep, in: Double(MenuBarDisplay.projectNameLengthRange.lowerBound)...Self.fullNameStep, step: 1) {
+                    Text("Name Length")
+                }
+                .labelsHidden()
+                .frame(width: 220)
+                .accessibilityValue(nameLengthText)
+                Text(nameLengthText)
+                    .monospacedDigit()
+                    .frame(width: 32, alignment: .trailing)
+            }
+            .disabled(!display.showsProjectName)
+
+            Divider()
+
+            HStack {
+                Text("Build Time")
+                Spacer()
+                Picker("Build Time", selection: $display.buildTimeStyle) {
+                    Text("2m 4s").tag(BuildTimeStyle.full)
+                    Text("2m").tag(BuildTimeStyle.compact)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .fixedSize()
+            }
+            .disabled(!display.showsBuildTime)
+        }
+    }
+
+    private var nameLengthStep: Binding<Double> {
+        Binding(
+            get: { display.projectNameLength == 0 ? Self.fullNameStep : Double(display.projectNameLength) },
+            set: { display.projectNameLength = $0 >= Self.fullNameStep ? 0 : Int($0) }
+        )
+    }
+
+    private var nameLengthText: String {
+        display.projectNameLength == 0 ? "Full" : String(display.projectNameLength)
+    }
+
+    private func part<Content: View>(
+        _ name: String,
+        isOn: Binding<Bool>,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        Toggle(isOn: isOn, label: content)
+            .toggleStyle(MenuBarPartToggleStyle())
+            // The last visible part stays on, or the app would vanish from the menu bar.
+            .disabled(isOn.wrappedValue && display.visiblePartCount == 1)
+            .accessibilityLabel(name)
+            .help(isOn.wrappedValue ? "Hide \(name)" : "Show \(name)")
+    }
+}
+
+/// A hidden part stays in place, faded and outlined, so it can be turned back on.
+private struct MenuBarPartToggleStyle: ToggleStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        let shape = RoundedRectangle(cornerRadius: 8)
+        return Button {
+            configuration.isOn.toggle()
+        } label: {
+            configuration.label
+                .opacity(configuration.isOn ? 1 : 0.35)
+                .padding(.horizontal, 12)
+                .frame(height: 40)
+                .background(Color.white.opacity(configuration.isOn ? 0.18 : 0), in: shape)
+                .overlay(shape.strokeBorder(Color.white.opacity(configuration.isOn ? 0.25 : 0.45)))
+                .contentShape(shape)
+        }
+        .buttonStyle(.plain)
     }
 }
 

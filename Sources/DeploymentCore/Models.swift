@@ -185,6 +185,7 @@ enum MenuLayout: String, Codable, CaseIterable {
 /// Settings shared by every platform.
 struct GeneralPreferences: Codable, Equatable {
     var menuLayout: MenuLayout
+    var menuBar = MenuBarDisplay.default
 
     static let `default` = GeneralPreferences(menuLayout: .byTime)
 }
@@ -194,6 +195,71 @@ extension GeneralPreferences {
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         menuLayout = (try? container.decodeIfPresent(MenuLayout.self, forKey: .menuLayout)) ?? Self.default.menuLayout
+        menuBar = (try? container.decodeIfPresent(MenuBarDisplay.self, forKey: .menuBar)) ?? .default
+    }
+}
+
+/// How precisely the menu bar shows the build time.
+enum BuildTimeStyle: String, Codable, CaseIterable {
+    /// Every unit, e.g. "2m 4s".
+    case full
+    /// Only the largest unit, e.g. "2m", so the width changes less often while building.
+    case compact
+}
+
+/// Which parts of the newest deployment the menu bar shows. ⚠ and the No Token / Error states always show.
+struct MenuBarDisplay: Codable, Equatable {
+    var showsPlatformIcon = true
+    var showsStatusIcon = true
+    var showsProjectName = true
+    var showsBuildTime = true
+    /// Characters of the project name to show; 0 means the whole name.
+    var projectNameLength = 3
+    var buildTimeStyle = BuildTimeStyle.full
+
+    static let `default` = MenuBarDisplay()
+    static let projectNameLengthRange = 3...20
+
+    /// The last visible part can't be hidden, or the app would vanish from the menu bar.
+    var visiblePartCount: Int {
+        [showsPlatformIcon, showsStatusIcon, showsProjectName, showsBuildTime].filter { $0 }.count
+    }
+
+    /// The shortest length is an uppercase abbreviation ("CHA"); longer lengths keep the name's case and end
+    /// with "…" when cut.
+    func projectLabel(for name: String) -> String {
+        guard projectNameLength > 0 else {
+            return name
+        }
+        if projectNameLength <= Self.projectNameLengthRange.lowerBound {
+            return String(name.prefix(projectNameLength)).uppercased()
+        }
+        guard name.count > projectNameLength else {
+            return name
+        }
+        return String(name.prefix(projectNameLength)) + "…"
+    }
+}
+
+extension MenuBarDisplay {
+    /// Missing keys fall back to the defaults so fields added later still decode older settings.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self = .default
+        func decode<Value: Decodable>(_ key: CodingKeys, into value: inout Value) {
+            if let decoded = try? container.decodeIfPresent(Value.self, forKey: key) {
+                value = decoded
+            }
+        }
+        decode(.showsPlatformIcon, into: &showsPlatformIcon)
+        decode(.showsStatusIcon, into: &showsStatusIcon)
+        decode(.showsProjectName, into: &showsProjectName)
+        decode(.showsBuildTime, into: &showsBuildTime)
+        decode(.projectNameLength, into: &projectNameLength)
+        decode(.buildTimeStyle, into: &buildTimeStyle)
+        if visiblePartCount == 0 {
+            self = .default
+        }
     }
 }
 

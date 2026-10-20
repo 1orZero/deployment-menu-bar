@@ -99,6 +99,13 @@ Open **Preferences…** from the menu. The window has three tabs: General, Verce
 - **By Time**: both platforms merged, newest first. Problems appear as banners at the top, and the Open Vercel/Cloudflare Dashboard items sit at the bottom.
 - **By Platform**: a Vercel section and a Cloudflare section, each with its own banner, deployments and dashboard link.
 
+**Menu Bar** sets what the menu bar item shows, which helps when the menu bar is crowded. Its preview draws the item at a larger size:
+- Click a part (platform icon, status icon, project name, build time) to show or hide it. A hidden part stays in the preview, faded, so you can turn it back on. The last visible part can't be hidden.
+- **Name Length** sets how much of the project name to show. The default, 3, shows a 3-letter uppercase abbreviation. Longer lengths keep the name's case and end with "…" when the name is cut. Drag the slider all the way right to show the whole name.
+- **Build Time** shows every unit ("2m 4s") or only the largest one ("2m"). With "2m", the item's width changes less often while a build runs.
+
+⚠ and the "No Token" and "Error" states always show, whatever you choose here.
+
 ### Refresh intervals and rate limits
 
 - **Vercel**: every 15 seconds when idle, every 2 seconds while a deployment is building. Both are configurable.
